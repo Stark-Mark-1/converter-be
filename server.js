@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { spawn } from "child_process";
 import { createWriteStream, createReadStream } from "fs";
 import { mkdir, rm, readdir } from "fs/promises";
@@ -23,6 +24,7 @@ const {
   R2_ACCESS_KEY,
   R2_SECRET_KEY,
   R2_PUBLIC_BASE,
+  CORS_ORIGIN = "*",
   PORT = "3000",
 } = process.env;
 
@@ -55,8 +57,19 @@ const s3 = new S3Client({
 // ---------------------------------------------------------------------------
 
 const app = express();
+
+// CORS — allow browser clients to call this API
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json());
 
+app.get("/presign", presign);
 app.post("/encode", encode);
 
 app.listen(Number(PORT), () => {
@@ -64,8 +77,43 @@ app.listen(Number(PORT), () => {
 });
 
 // ---------------------------------------------------------------------------
-// Route handler
+// Route handlers
 // ---------------------------------------------------------------------------
+
+/**
+ * GET /presign?key=uploads%2F<videoId>.mp4
+ *
+ * Returns a short-lived presigned PUT URL so the browser can upload
+ * directly to R2 without proxying through this server.
+ */
+async function presign(req, res) {
+  const { key } = req.query;
+
+  if (!key || typeof key !== "string") {
+    return res.status(400).json({ error: "key query param is required" });
+  }
+
+  // Only allow presigned PUTs into the uploads/ prefix
+  if (!key.startsWith("uploads/") || key.includes("..")) {
+    return res.status(400).json({ error: "Invalid key" });
+  }
+
+  try {
+    const cmd = new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      ContentType: "video/mp4",
+    });
+
+    // URL valid for 15 minutes — enough for large file uploads
+    const url = await getSignedUrl(s3, cmd, { expiresIn: 900 });
+
+    return res.json({ url });
+  } catch (err) {
+    console.error("[presign] Error:", err);
+    return res.status(500).json({ error: "Failed to generate presigned URL" });
+  }
+}
 
 async function encode(req, res) {
   const { videoId } = req.body;
