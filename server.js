@@ -50,6 +50,11 @@ const s3 = new S3Client({
     accessKeyId: R2_ACCESS_KEY,
     secretAccessKey: R2_SECRET_KEY,
   },
+  // AWS SDK v3 ≥3.535 enables CRC32 checksums by default, which get baked
+  // into presigned URLs. Browsers won't send those headers, causing
+  // SignatureDoesNotMatch. "when_required" disables the automatic injection.
+  requestChecksumCalculation: "when_required",
+  responseChecksumValidation: "when_required",
 });
 
 // ---------------------------------------------------------------------------
