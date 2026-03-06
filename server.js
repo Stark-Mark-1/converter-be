@@ -178,10 +178,10 @@ async function encode(req, res) {
     if (err.name === "NoSuchKey") {
       return res
         .status(404)
-        .json({ error: `Source file not found: uploads/${safeId}.mp4` });
+        .json({ status: "error", message: `Source file not found: uploads/${safeId}.mp4` });
     }
 
-    return res.status(500).json({ error: "Encoding failed" });
+    return res.status(500).json({ status: "error", message: "Encoding failed" });
   }
 }
 
