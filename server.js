@@ -63,6 +63,9 @@ const s3 = new S3Client({
 
 const app = express();
 
+const MAX_CONCURRENT_JOBS = 2;
+let activeJobs = 0;
+
 // CORS — allow browser clients to call this API
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
@@ -76,6 +79,7 @@ app.use(express.json());
 
 app.get("/presign", presign);
 app.post("/encode", encode);
+app.get("/health", health);
 
 app.listen(Number(PORT), () => {
   console.log(`Encoding service listening on port ${PORT}`);
@@ -84,6 +88,15 @@ app.listen(Number(PORT), () => {
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
+
+function health(req, res) {
+  res.json({
+    status: "ok",
+    activeJobs,
+    maxJobs: MAX_CONCURRENT_JOBS,
+    availableSlots: MAX_CONCURRENT_JOBS - activeJobs
+  });
+}
 
 /**
  * GET /presign?key=uploads%2F<videoId>.mp4
@@ -134,6 +147,15 @@ async function encode(req, res) {
     return res.status(400).json({ error: "Invalid videoId" });
   }
 
+  if (activeJobs >= MAX_CONCURRENT_JOBS) {
+    return res.status(429).json({
+      status: "busy",
+      message: "Server currently processing maximum number of videos"
+    });
+  }
+
+  activeJobs++;
+
   const workDir = join(tmpdir(), `encode-${safeId}-${randomUUID()}`);
 
   try {
@@ -171,7 +193,7 @@ async function encode(req, res) {
     });
   } catch (err) {
     // Best-effort cleanup on error
-    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    await rm(workDir, { recursive: true, force: true }).catch(() => { });
 
     console.error(`[encode] Error for videoId=${safeId}:`, err);
 
@@ -182,6 +204,8 @@ async function encode(req, res) {
     }
 
     return res.status(500).json({ status: "error", message: "Encoding failed" });
+  } finally {
+    activeJobs--;
   }
 }
 
@@ -223,8 +247,10 @@ function runFfmpeg(inputPath, outputDir) {
       "-i", inputPath,
       // Video
       "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-crf", "23",
+      "-preset", "superfast",
+      "-crf", "24",
+      "-g", "48",
+      "-sc_threshold", "0",
       "-profile:v", "main",
       "-level", "3.1",
       // Audio
